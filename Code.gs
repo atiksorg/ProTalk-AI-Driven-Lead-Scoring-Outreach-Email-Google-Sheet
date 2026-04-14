@@ -466,16 +466,18 @@ function processFollowUps(ss, cfg) {
         updateTaskStatus(tasksSheet, i+1, "completed");
         continue;
       }      // Проверка ответа клиента (с защитой от лимита Gmail API)
-      try {
-        const threads = GmailApp.search(`from:${email}`);
-        if (threads.length > 0) {
-          updateTaskStatus(tasksSheet, i+1, "replied");
-          updateABStats(ss, campId, data[i][2], "reply");
-          continue;
+      if (!SKIP_REPLY_CHECK) {
+        try {
+          const threads = GmailApp.search(`from:${email}`);
+          if (threads.length > 0) {
+            updateTaskStatus(tasksSheet, i+1, "replied");
+            updateABStats(ss, campId, data[i][2], "reply");
+            continue;
+          }
+        } catch(gmailErr) {
+          // Лимит Gmail API исчерпан — пропускаем проверку ответа, не блокируем задачу
+          console.log(`⚠️ Gmail API лимит при проверке ответа от ${email}: ${gmailErr.message}. Пропускаем проверку, продолжаем.`);
         }
-      } catch(gmailErr) {
-        // Лимит Gmail API исчерпан — пропускаем проверку ответа, не блокируем задачу
-        console.log(`⚠️ Gmail API лимит при проверке ответа от ${email}: ${gmailErr.message}. Пропускаем проверку, продолжаем.`);
       }
 
       // Проверка задержки
