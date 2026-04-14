@@ -1,5 +1,19 @@
 # ProTalk: AI-Driven Lead Scoring and Outreach Email in Google Sheet
 
+**🔗 [Открыть шаблон Google Sheets](https://docs.google.com/spreadsheets/d/1Yium08q_ip4s3KePPgiD9slLA2xtDpqUs7oZKeZjZYg/edit?usp=sharing)**  
+*Скопируйте таблицу себе (Файл → Создать копию) для начала работы.*
+
+### 📸 Интерфейс Комбайна v4.0
+
+<p align="center">
+  <img src="https://wl.atiks.org/helpers/c0.jpg" width="24%" alt="Главное меню" />
+  <img src="https://wl.atiks.org/helpers/c1.jpg" width="24%" alt="Лист CAMPAIGNS" />
+  <img src="https://wl.atiks.org/helpers/c2.jpg" width="24%" alt="Лист TASKS" />
+  <img src="https://wl.atiks.org/helpers/c3.jpg" width="24%" alt="Лист LOG" />
+</p>
+
+---
+
 **Комбайн v4.0** — автоматизация холодных email‑рассылок с глубоким AI‑анализом сайтов, скорингом лидов и персонализированной генерацией писем. Всё работает прямо в Google Sheets и использует функции платформы [ProTalk](https://pro-talk.ru).
 
 ---
@@ -50,7 +64,7 @@
 ## 🚀 Установка и настройка
 
 1. **Создайте копию Google‑таблицы**  
-   Скачайте пустую таблицу‑шаблон или создайте новую и выполните скрипт `setupSheets()` (см. ниже).
+   Используйте [эту ссылку](https://docs.google.com/spreadsheets/d/1Yium08q_ip4s3KePPgiD9slLA2xtDpqUs7oZKeZjZYg/edit?usp=sharing), чтобы открыть шаблон, и выберите `Файл` → `Создать копию`.
 
 2. **Откройте редактор скриптов**  
    В таблице выберите `Расширения` → `Apps Script`. Удалите содержимое по умолчанию.
@@ -153,3 +167,5 @@
 - **AI Router (OpenRouter)** – вызов языковых моделей через ProTalk с поддержкой структурированного вывода.
 - **Gmail API** – отправка писем, работа с тредами (используется встроенный сервис `GmailApp`).
 - **Telegram Bot API** – уведомления о новых Hot‑Leads.
+
+## 📁 Структура репозитория
