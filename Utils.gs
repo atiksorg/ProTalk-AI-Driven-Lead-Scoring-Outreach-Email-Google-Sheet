@@ -2,6 +2,8 @@
 // Utils.gs — Константы и помощники
 // =============================================================================
 
+const SKIP_REPLY_CHECK     = true; // Отключает проверку ответов на письма для экономии лимитов Gmail API
+
 const SHEET_CONFIG         = "⚙️ CONFIG";
 const SHEET_CAMPAIGNS      = "🎯 CAMPAIGNS";
 const SHEET_QUERIES        = "🔍 QUERIES";
