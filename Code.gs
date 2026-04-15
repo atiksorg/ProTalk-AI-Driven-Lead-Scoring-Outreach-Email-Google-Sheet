@@ -2,6 +2,16 @@
 // Code.gs — КОМБАЙН v4.0: Скорринг, Секвенции, HTML-Интеллект
 // =============================================================================
 
+function checkQuota() {
+  const quota = MailApp.getRemainingDailyQuota();
+  Logger.log(quota);
+  
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const cfg = readConfig(ss);
+  
+  sendTelegramNotification(cfg, `ℹ️ <b>Остаток квоты Gmail:</b> ${quota} писем.`);
+}
+
 function runCombine() {
   console.log("Запуск Комбайна v4.0...");
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -16,13 +26,13 @@ function runCombine() {
     if (processHotLeadDecisions(ss, cfg)) return;
   } catch(e) {
     console.log(`⚠️ Ошибка в processHotLeadDecisions (Gmail лимит?): ${e.message}. Продолжаем к новым задачам.`);
-  }
-
-  // 2. Обработка Секвенций (Фоллоу-апы)
-  try {
-    if (processFollowUps(ss, cfg)) return; // Если обработали фоллоу-ап, выходим
-  } catch(e) {
-    console.log(`⚠️ Ошибка в processFollowUps (Gmail лимит?): ${e.message}. Продолжаем к новым задачам.`);
+  }  // 2. Обработка Секвенций (Фоллоу-апы)
+  if (String(cfg.ENABLE_FOLLOWUPS).trim() === "1") {
+    try {
+      if (processFollowUps(ss, cfg)) return; // Если обработали фоллоу-ап, выходим
+    } catch(e) {
+      console.log(`⚠️ Ошибка в processFollowUps (Gmail лимит?): ${e.message}. Продолжаем к новым задачам.`);
+    }
   }
 
   // 3. Поиск новых задач
@@ -38,14 +48,19 @@ function runCombine() {
     const queryObj = queries[Math.floor(Math.random() * queries.length)];
     
     console.log(`Поиск: ${queryObj.query} (Кампания: ${camp.id})`);
-    const searchRes = callProTalkFunction(cfg, FN_SEARCH, { query: queryObj.query, country: queryObj.country, num_results: queryObj.num_results });
+    const searchRes = callProTalkFunction(cfg, FN_SEARCH, { query: queryObj.query, country: queryObj.country, num_results: queryObj.num_results, start_position: queryObj.start_position });
     
     if (searchRes.success && searchRes.result.result) {
       let urls = searchRes.result.result;
-      urls.forEach(url => {
-        tasksSheet.appendRow([url, camp.id, "", "new", "1", new Date(), "", "", "", ""]);
-      });
-      pendingTasks = getTasksByStatus(tasksSheet, "new");
+      if (Array.isArray(urls)) {
+        urls.forEach(url => {
+          tasksSheet.appendRow([url, camp.id, "", "new", "1", new Date(), "", "", "", ""]);
+        });
+        pendingTasks = getTasksByStatus(tasksSheet, "new");
+      } else {
+        console.log("Ошибка поиска: результат не является массивом", urls);
+        return;
+      }
     } else {
       console.log("Ошибка поиска");
       return;
@@ -127,7 +142,7 @@ function processInitialTask(ss, cfg, task) {
     const visionPromptUser = camp.visionPrompt || "Оцени сайт.";
     const vRes = callProTalkFunction(cfg, FN_VISION, {
       ai_model: "xiaomi/mimo-v2-omni",
-      system_prompt: 'Оцени сайт. Выведи строго JSON: {"pass": true/false, "desc": "краткое описание"}',
+      system_prompt: 'Оцени сайт. Выведи строго JSON: {"pass": true/false, "short_desc": "краткое описание", "full_desc": "подробное описание дизайна сайта, навигации, цветов и т.д."}',
       user_text: visionPromptUser,
       image_url: screenshotUrl
     });
@@ -166,6 +181,7 @@ function processInitialTask(ss, cfg, task) {
       task.email = email;
       task.screenshot = screenshotUrl;
       task.vision = visionRawAnswer; // <-- пробрасываем ответ Vision в задачу
+      task.visionData = visionData; // <-- пробрасываем распарсенный JSON Vision в задачу
       // Фиксируем в HOT_LEADS как уже отправленный
       ss.getSheetByName(SHEET_HOT_LEADS).appendRow([
         new Date(), scoreData.score, intel.domain, email, camp.id, JSON.stringify(intel), screenshotUrl, "sent"
@@ -180,6 +196,7 @@ function processInitialTask(ss, cfg, task) {
         (screenshotUrl ? `🖼 <b>Скриншот:</b> ${screenshotUrl}\n` : "") +
         `\n✅ Письмо уже в пути — ручное действие не требуется.`
       );
+      checkQuota();
       sendSequenceStep(ss, cfg, task, camp, intel, 1);
     } else {
       // Авто-отправка выключена — ждём ручного решения
@@ -206,6 +223,7 @@ function processInitialTask(ss, cfg, task) {
   task.score = scoreData.score;       // <-- Добавляем скор в память для логов
   task.screenshot = screenshotUrl;    // <-- Добавляем скриншот в память для логов
   task.vision = visionRawAnswer;      // <-- Добавляем ответ Vision в память для логов
+  task.visionData = visionData;       // <-- Добавляем распарсенный JSON Vision в память
   sendSequenceStep(ss, cfg, task, camp, intel, 1);
 }
 
@@ -230,11 +248,10 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
   const aiModel = (tpl.model && String(tpl.model).trim()) ? String(tpl.model).trim() : (cfg.DEFAULT_MODEL || "openai/gpt-4o-mini");
 
   // Подпись — единая для всех шагов
-  const signature = (tpl.signature && String(tpl.signature).trim()) ? `\n\n${String(tpl.signature).trim()}` : "";
-
-  let emailBody = "";
+  const signature = (tpl.signature && String(tpl.signature).trim()) ? `\n\n${String(tpl.signature).trim()}` : "";  let emailBody = "";
   let emailSubject = "";
   let variant = {label: "A", prompt: camp.promptA};
+  let aiPromptUsed = "";
 
   if (stepNum === 1) {
     // ШАГ 1: сборка письма согласно режиму ИИ из EMAIL_TEMPLATES
@@ -245,17 +262,26 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
     const seqSubject = String(step.subject || "").trim();
     emailSubject = (tplSubject ? tplSubject : seqSubject).replace("{domain}", intel.domain);
 
+    let visionContext = "";
+    if (task.visionData && (task.visionData.short_desc || task.visionData.full_desc)) {
+      visionContext = `Визуальное описание сайта (Vision AI):\nКратко: ${task.visionData.short_desc || "Нет"}\nПодробно: ${task.visionData.full_desc || "Нет"}`;
+    } else if (task.vision) {
+      visionContext = `Визуальное описание сайта (Vision AI): ${task.vision}`;
+    }
+
     if (tpl.ai_mode === "strict") {
       // ─── STRICT: ИИ пишет только ледокол, оффер вставляется дословно ───────
       // Используй когда в оффере есть точные цифры, ссылки, юридические формулировки.
       const aiPrompt = [
         `Контекст сайта: ${JSON.stringify(intel)}`,
+        visionContext,
         ``,
         `Инструкция: ${variant.prompt}`,
         ``,
         `Напиши ТОЛЬКО персональный ледокол — 2-3 предложения, которые покажут что ты изучил сайт.`,
         `Не пиши оффер, не пиши подпись. Только ледокол.`
       ].join("\n");
+      aiPromptUsed = aiPrompt;
 
       const aiRes = callAIRouter(cfg, aiPrompt, aiModel);
       const icebreaker = aiRes.success ? aiRes.text.trim() : "";
@@ -267,6 +293,7 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
       // Используй для более живых, персонализированных писем.
       const aiPrompt = [
         `Контекст сайта: ${JSON.stringify(intel)}`,
+        visionContext,
         ``,
         `Инструкция (стиль): ${variant.prompt}`,
         ``,
@@ -280,6 +307,7 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
         `Оффер:`,
         tpl.offer_text
       ].join("\n");
+      aiPromptUsed = aiPrompt;
 
       const aiRes = callAIRouter(cfg, aiPrompt, aiModel);
       if (aiRes.success) {
@@ -294,6 +322,7 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
       // Максимальная свобода ИИ. Используй когда оффер — это инструкция, а не готовый текст.
       const aiPrompt = [
         `Контекст сайта: ${JSON.stringify(intel)}`,
+        visionContext,
         ``,
         `Инструкция (стиль): ${variant.prompt}`,
         ``,
@@ -302,6 +331,7 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
         ``,
         `Требования: персональный ледокол + оффер своими словами. Не пиши подпись.`
       ].join("\n");
+      aiPromptUsed = aiPrompt;
 
       const aiRes = callAIRouter(cfg, aiPrompt, aiModel);
       if (aiRes.success) {
@@ -317,23 +347,57 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
     // Если фоллоу-апов несколько (шаги 3, 4...) — берём followup_text как базу
     emailBody = (tpl.followup_text || step.template || "") + signature;
     emailSubject = ""; // reply в тред, тема не нужна
-  }
-
-  // Финальная замена плейсхолдеров
+  }  // Финальная замена плейсхолдеров
   emailBody = emailBody.replace(/\{domain\}/g, intel.domain || "");
+
+  // --- Режим отладки: перенаправление на TEST_EMAIL ---
+  let targetEmail = task.email;
+  if (cfg.TEST_EMAIL && String(cfg.TEST_EMAIL).trim() !== "") {
+    targetEmail = String(cfg.TEST_EMAIL).trim();
+    console.log(`[DEBUG] Включен режим отладки. Письмо для ${task.email} перенаправлено на ${targetEmail}`);
+    emailSubject = `[TEST for ${task.email}] ` + emailSubject;
+  }  // --- Логируем что собираемся сделать ---
+  console.log(`[INFO] Попытка отправить письмо на адрес: ${targetEmail}`);
+  console.log(`[INFO] Тема письма: ${emailSubject || "Reply"}`);
+
+  const isFakeSend = String(cfg.FAKE_MAIL_SEND).trim() === "1";
 
   try {
     let threadId = task.threadId;
-    if (stepNum === 1) {
-      const draft = GmailApp.createDraft(task.email, emailSubject, emailBody, {name: cfg.SENDER_NAME});
-      const msg = draft.send();
-      threadId = msg.getThread().getId();
-      logDomainContact(ss, intel.domain, camp.id); // Записываем домен
-      updateABStats(ss, camp.id, variant.label, "sent");
+    if (isFakeSend) {
+      console.log(`[FAKE SEND] Письмо для ${targetEmail} не отправлено (включен FAKE_MAIL_SEND).`);
+      threadId = threadId || "fake_thread_" + new Date().getTime();
+      if (stepNum === 1) {
+        logDomainContact(ss, intel.domain, camp.id);
+        updateABStats(ss, camp.id, variant.label, "sent");
+      }
     } else {
-      const thread = GmailApp.getThreadById(task.threadId);
-      thread.reply(emailBody, {name: cfg.SENDER_NAME});
+      if (stepNum === 1) {
+        if (String(cfg.ENABLE_FOLLOWUPS).trim() === "1") {
+          // Режим с фоллоу-апами (тратит 2 квоты, но сохраняет threadId)
+          const draft = GmailApp.createDraft(targetEmail, emailSubject, emailBody, {name: cfg.SENDER_NAME});
+          const msg = draft.send();
+          threadId = msg.getThread().getId();
+        } else {
+          // Режим без фоллоу-апов (тратит 1 квоту, threadId не нужен)
+          MailApp.sendEmail({
+            to: targetEmail,
+            subject: emailSubject,
+            body: emailBody,
+            name: cfg.SENDER_NAME
+          });
+          threadId = ""; // Фоллоу-апы выключены, threadId не сохраняем
+        }
+        logDomainContact(ss, intel.domain, camp.id); // Записываем домен
+        updateABStats(ss, camp.id, variant.label, "sent");
+      } else {
+        const thread = GmailApp.getThreadById(task.threadId);
+        thread.reply(emailBody, {name: cfg.SENDER_NAME});
+      }
     }
+
+    // --- Если ошибки нет, пишем об успехе ---
+    console.log(`[SUCCESS] Письмо успешно отправлено в ${new Date()}`);
 
     const tasksSheet = ss.getSheetByName(SHEET_TASKS);
     updateTaskStatus(tasksSheet, task.rowNum, `wait_seq_${stepNum + 1}`);
@@ -341,10 +405,37 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
     tasksSheet.getRange(task.rowNum, 5).setValue(stepNum + 1);
     if (stepNum === 1) {
       tasksSheet.getRange(task.rowNum, 3).setValue(variant.label);
+      
+      // Отправляем уведомление в Telegram с деталями отправленного письма
+      sendTelegramNotification(cfg,
+        `✅ <b>Письмо отправлено (Шаг 1)</b>\n\n` +
+        `🏢 <b>Домен:</b> ${intel.domain}\n` +
+        `📧 <b>Email:</b> ${task.email}\n` +
+        `🎯 <b>Кампания:</b> ${camp.id}\n` +
+        `🤖 <b>Модель:</b> ${aiModel}\n\n` +
+        `📝 <b>Промпт ИИ:</b>\n<pre>${escapeHtmlForTelegram(aiPromptUsed)}</pre>\n\n` +
+        `✉️ <b>Сгенерированное письмо:</b>\n<pre>${escapeHtmlForTelegram(emailBody)}</pre>`
+      );
     }
 
-    logRow(ss, {status: "SUCCESS", score: task.score, campaign: camp.id, url: task.url, email: task.email, screenshot: task.screenshot, details: `Шаг ${stepNum} отправлен (модель: ${aiModel})`, body: emailBody, vision: task.vision || ""});
+    logRow(ss, {status: isFakeSend ? "FAKE_SUCCESS" : "SUCCESS", score: task.score, campaign: camp.id, url: task.url, email: task.email, screenshot: task.screenshot, details: `Шаг ${stepNum} отправлен (модель: ${aiModel})`, body: emailBody, vision: task.vision || ""});
+    
+    logSendRow(ss, {
+      status: isFakeSend ? "FAKE_SENT" : "SENT",
+      campaign: camp.id,
+      email: targetEmail,
+      subject: emailSubject,
+      body: emailBody,
+      aiModel: aiModel,
+      aiPrompt: aiPromptUsed,
+      aiMode: tpl.ai_mode,
+      threadId: threadId
+    });
+
   } catch(e) {
+    // --- Если ошибка есть, пишем её текст ---
+    console.error(`[ERROR] Не удалось отправить письмо: ${e.message}`);
+
     updateTaskStatus(ss.getSheetByName(SHEET_TASKS), task.rowNum, "error_send");
     logRow(ss, {
       status: "ERROR_SEND",
@@ -356,6 +447,19 @@ function sendSequenceStep(ss, cfg, task, camp, intel, stepNum) {
       details: `Шаг ${stepNum}: ${e.message}`,
       body: emailBody,        // ← сохраняем сгенерированное письмо даже при ошибке отправки
       vision: task.vision || "" // ← ответ Vision API
+    });
+
+    logSendRow(ss, {
+      status: "ERROR",
+      campaign: camp.id,
+      email: targetEmail,
+      subject: emailSubject,
+      body: emailBody,
+      aiModel: aiModel,
+      aiPrompt: aiPromptUsed,
+      aiMode: tpl.ai_mode,
+      threadId: task.threadId,
+      error: e.message
     });
   }
 }
