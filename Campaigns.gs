@@ -30,11 +30,12 @@ function getQueriesForCampaign(ss, campaignId) {
   const data = s.getDataRange().getValues();
   let queries = [];
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === campaignId && data[i][4] === "active") {
+    if (data[i][0] === campaignId && data[i][5] === "active") {
       queries.push({
         query: data[i][1],
         country: data[i][2] || "ru",
-        num_results: Number(data[i][3]) || 10
+        num_results: Number(data[i][3]) || 10,
+        start_position: Number(data[i][4]) || 0
       });
     }
   }
