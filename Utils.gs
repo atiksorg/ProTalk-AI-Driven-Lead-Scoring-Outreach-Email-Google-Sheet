@@ -14,6 +14,7 @@ const SHEET_HOT_LEADS      = "🔥 HOT_LEADS";
 const SHEET_TASKS          = "📝 TASKS";
 const SHEET_EMAIL_TEMPLATES= "✉️ EMAIL_TEMPLATES";
 const SHEET_LOG            = "📊 LOG";
+const SHEET_SEND_LOG       = "📤 SEND_LOG";
 const SHEET_SCHEDULE       = "⏱️ SCHEDULE";
 const SHEET_BLACKLIST      = "🚫 BLACKLIST";
 
@@ -62,6 +63,24 @@ function logRow(ss, opts) {
     opts.url || "", opts.email || "", opts.screenshot || "", opts.details || "",
     opts.body || "",    // Колонка I — тело сгенерированного письма
     opts.vision || ""   // Колонка J — ответ Vision API (сырой текст)
+  ]);
+}
+
+function logSendRow(ss, opts) {
+  const sheet = ss.getSheetByName(SHEET_SEND_LOG);
+  if (!sheet) return;
+  sheet.appendRow([
+    new Date(),
+    opts.status || "",
+    opts.campaign || "",
+    opts.email || "",
+    opts.subject || "",
+    opts.body || "",
+    opts.aiModel || "",
+    opts.aiPrompt || "",
+    opts.aiMode || "",
+    opts.threadId || "",
+    opts.error || ""
   ]);
 }
 
@@ -195,6 +214,14 @@ function randomString(length) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+
+function escapeHtmlForTelegram(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 // =============================================================================
